@@ -350,7 +350,7 @@ func (c *TranslClient) StreamRun(q *queue.PriorityQueue, stop chan struct{}, w *
 		go processSubWorker(subChan, wg)
 	}
 
-	for i, pInfo := range subSupport {
+	for _, pInfo := range subSupport {
 		sub := subscribe.Subscription[pInfo.ID]
 		log.V(6).Infof("Start Sub: %v", sub)
 		pathStr := pInfo.Path
@@ -382,9 +382,9 @@ func (c *TranslClient) StreamRun(q *queue.PriorityQueue, stop chan struct{}, w *
 			pInfo.MinInterval = translib.MinSubscribeInterval
 		}
 
-		if hb := sub.HeartbeatInterval; hb > 0 && hb < uint64(pInfo.MinInterval)*uint64(time.Second) {
+		if hb := sub.HeartbeatInterval; hb > 0 && hb < uint64(pInfo.MinInterval) {
 			enqueFatalMsgTranslib(c, fmt.Sprintf("Invalid Heartbeat Interval %ds, minimum interval is %ds",
-				sub.HeartbeatInterval/uint64(time.Second), subSupport[i].MinInterval))
+				sub.HeartbeatInterval/uint64(time.Second), pInfo.MinInterval/time.Second))
 			close(subChan)
 			return
 		}
@@ -392,11 +392,11 @@ func (c *TranslClient) StreamRun(q *queue.PriorityQueue, stop chan struct{}, w *
 		log.V(6).Infof("subscribe_mode %v for path %s", subscribe_mode, pathStr)
 		if subscribe_mode == gnmipb.SubscriptionMode_SAMPLE {
 			interval := int(sub.SampleInterval)
-			minInterval := pInfo.MinInterval * int(time.Second)
+			minInterval := int(pInfo.MinInterval)
 			if interval == 0 {
 				interval = minInterval
 			} else if interval < minInterval {
-				enqueFatalMsgTranslib(c, fmt.Sprintf("Invalid SampleInterval %ds, minimum interval is %ds", interval/int(time.Second), pInfo.MinInterval))
+				enqueFatalMsgTranslib(c, fmt.Sprintf("Invalid SampleInterval %ds, minimum interval is %ds", interval/int(time.Second), pInfo.MinInterval/time.Second))
 				close(subChan)
 				return
 			}
