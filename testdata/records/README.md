@@ -27,17 +27,33 @@ the idealized `ts|op|key|attr` sketch in the plan.
   box: `SAI_STATUS_NOT_SUPPORTED`, `SAI_STATUS_NOT_IMPLEMENTED`,
   `SAI_STATUS_BUFFER_OVERFLOW` — all on `Q` capability probes, not programming ops.
 
-## The `E` (failure) line — why it's hand-written
+## The `E` (failure) line — real, but only in sync mode on a box that can fail
 
-The plan assumes create/set/remove failures appear as `ts|E|SAI_STATUS_...`.
-**Current sonic-sairedis emits no `E` opcode at all**, and its create/set/remove
-response recorders (`recordGenericCreateResponse` etc. in `lib/Recorder.cpp`) are
-empty `// TODO` stubs — so a failed route/neighbor program is **not recorded** in
-`sairedis.rec` on any box today (VS or hardware). Only get/query responses carry a
-status. A virtual switch additionally never returns SAI failures (vslib accepts
-everything), so we cannot capture a real `E` here.
+A failed SAI create/set/remove **is** recorded as `E|<status>`, exactly as the
+plan assumes — but only in **synchronous** sairedis mode (`redis_sync`/`zmq_sync`).
+The path (see `sonic-sairedis`):
 
-`sairedis_with_E.sample` is therefore a hand-written fixture (per the plan's
-Risk-#2 mitigation) so the `ops=E` / status-attachment path is testable either way.
-When wiring real failure detection, read non-`SUCCESS` status off the `G`/`Q`/`F`/`A`
-response lines rather than expecting an `E` opcode.
+- `RedisRemoteSaiInterface::create/set/remove` writes the request line
+  (`c|` / `s|` / `r|`), then calls `waitForResponse(...)`.
+- `waitForResponse` (only when `m_syncMode`) waits for syncd's real status and
+  calls `Recorder::recordGenericResponse(status)`.
+- `recordGenericResponse` writes `E|<SAI_STATUS_...>` **only when status !=
+  SAI_STATUS_SUCCESS** (`Recorder.cpp` ~L1315). Bulk ops use
+  `recordBulkGenericResponse` → `E|<overall>|<per-object statuses>`.
+
+Format: the `E` line carries **no key** — it belongs to the request line
+immediately before it. So a parser attaches it to the last emitted sairedis
+record (which is what `records_parser.go` does).
+
+Why this fixture is hand-written: a virtual switch's SAI (`libsaivs`) returns
+`SUCCESS` for every create/set/remove, so `status != SUCCESS` never triggers and
+**no `E` line is ever produced on a VS**. That is a virtual-SAI limitation, not a
+sairedis one — on real hardware in sync mode, `ops=E` lights up for genuine
+programming failures. `sairedis_with_E.sample` lets us exercise the attach +
+`ops=E` path on a VS where a real failure can't be produced.
+
+Separately, get/query responses carry their own status via `G|<status>`,
+`Q|<api>|<status>`, `F|<status>`, `A|<status>`. The non-success values seen on
+this VS (`SAI_STATUS_NOT_SUPPORTED`, `NOT_IMPLEMENTED`, `BUFFER_OVERFLOW`) are all
+capability probes on `Q` lines — distinct from the `E` create/set/remove failure
+path.
