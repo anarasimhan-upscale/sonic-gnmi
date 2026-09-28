@@ -25,12 +25,19 @@ Validated on a running SONiC master VS (`vlab-01`, Debian 13.6, glibc 2.41):
    bulk lines using `||` separators with the object type stated once
    (`S|SAI_OBJECT_TYPE_ROUTE_ENTRY||{k1}|a1||{k2}|a2...`). The parser keys off the
    `SAI_OBJECT_TYPE_` token to find the key regardless of variant.
-3. **Toolchain/ABI skew:** the running VS is fresh master (trixie, libhiredis.so.1,
-   python3.13, **libyang.so.3**). Older local build trees (upscale
-   `nbi/translib-unify`, go 1.21) vendor a CVL that uses the libyang **1.x** API and
-   will not compile against libyang3 headers. A binary that runs *inside* the VS
-   gnmi container needs a libyang3-compatible source (fresh master mgmt-common).
-   This is a build-infra follow-up, not a code issue in this PR.
+3. **Toolchain/ABI skew:** the running trixie VS is fresh master (libhiredis.so.1,
+   python3.13, **libyang.so.3**). Every local build tree vendors a CVL that uses the
+   custom libyang **1.x** API (`ly_verb`, `lyd_free_withsiblings`,
+   `lyd_node_union_matches_non_leafref`, ...) and cannot compile against libyang3 —
+   that is the full upstream libyang1->3 CVL migration, not a patch. So a binary for
+   the *trixie* gnmi container needs libyang3-compatible mgmt-common source (not on
+   this host). **Resolution for the demo:** the real SONiC gnmi container image
+   `docker-gnmi:latest` is Debian 12 (bookworm) with exactly the libs our binary
+   links (libhiredis.so.0.14, libpython3.11, **libyang.so.1**). We run the RECORDS
+   telemetry inside that real gnmi image (`recdemo-gnmi:latest` = docker-gnmi + redis)
+   at the real `/usr/sbin/telemetry` path — no ABI shims. All bookworm sonic-vs
+   images on the host are also bookworm, so the binary drops straight into their gnmi
+   containers too.
 4. **telemetry flag parsing:** `main()` parses telemetry flags via a private
    `flag.FlagSet` that rejects unknown flags, so `-records_dir` on the CLI is not
    accepted. RECORDS is therefore configured via env (`RECORDS_DIR`, `RECORDS_TZ`).
@@ -60,6 +67,8 @@ libhiredis / libpython / libyang sonames must match).
 
 ## Demo (proven end-to-end on the VS's real data)
 
-See `doc/records_demo.sh`. Verified: replay with `from=`, exact key match,
-APPL_DB→sairedis correlation (`matched_by:correlation:ROUTE_TABLE.dest`),
-`ops=DEL`/`ops=E` filters, and live tail of a `config route add/del`.
+See `doc/records_demo.sh`. Verified **inside the real SONiC gnmi container image**
+(`docker-gnmi:latest`, telemetry at `/usr/sbin/telemetry`): replay with `from=`,
+exact key match, APPL_DB→sairedis correlation
+(`matched_by:correlation:ROUTE_TABLE.dest`), `ops=DEL`/`ops=E` filters, and live
+tail of a `config route add/del` on the switch.
